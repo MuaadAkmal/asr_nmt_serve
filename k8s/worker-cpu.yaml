@@ -1,0 +1,61 @@
+# CPU Workers - Run on non-GPU nodes
+# These workers handle lightweight tasks like webhooks, cleanup, etc.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asr-nmt-worker-cpu
+  namespace: asr-nmt
+  labels:
+    app: asr-nmt-worker-cpu
+spec:
+  replicas: 2  # Run on the 2 non-GPU slave nodes
+  selector:
+    matchLabels:
+      app: asr-nmt-worker-cpu
+  template:
+    metadata:
+      labels:
+        app: asr-nmt-worker-cpu
+    spec:
+      # Prefer non-GPU nodes
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: gpu
+                    operator: DoesNotExist
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+      containers:
+        - name: worker
+          image: your-registry/asr-nmt-serve:latest  # Change to your image
+          imagePullPolicy: Always
+          command: ["celery"]
+          args:
+            - "-A"
+            - "src.worker"
+            - "worker"
+            - "--loglevel=info"
+            - "--concurrency=4"
+            - "--queues=default,high_priority"  # Only default and high_priority, no asr/nmt
+            - "--hostname=cpu-worker@%h"
+          envFrom:
+            - secretRef:
+                name: asr-nmt-secrets
+            - configMapRef:
+                name: asr-nmt-config
+          env:
+            - name: WHISPER_DEVICE
+              value: "cpu"  # Fallback to CPU if needed
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2"

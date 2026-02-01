@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: asr-nmt-config
+  namespace: asr-nmt
+data:
+  # API Settings
+  API_HOST: "0.0.0.0"
+  API_PORT: "8000"
+  DEBUG: "false"
+  
+  # Model Settings
+  WHISPER_MODEL: "large-v3"
+  WHISPER_DEVICE: "cuda"
+  
+  # Worker Settings
+  CELERY_WORKER_CONCURRENCY: "2"
+  
+  # Storage
+  STORAGE_TYPE: "minio"

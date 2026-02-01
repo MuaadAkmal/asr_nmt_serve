@@ -1,0 +1,32 @@
+# Kustomization for easy deployment
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: asr-nmt
+
+resources:
+  - namespace.yaml
+  - secrets.yaml
+  - configmap.yaml
+  - postgres.yaml
+  - redis.yaml
+  - minio.yaml
+  - api.yaml
+  - worker-gpu.yaml
+  - worker-cpu.yaml
+  - celery-beat.yaml
+  - hpa.yaml
+  - network-policy.yaml
+
+# Common labels
+commonLabels:
+  project: asr-nmt-serve
+
+# Image customization (override with kustomize edit set image)
+images:
+  - name: your-registry/asr-nmt-serve
+    newName: your-registry/asr-nmt-serve
+    newTag: latest
+  - name: your-registry/asr-nmt-serve:gpu-latest
+    newName: your-registry/asr-nmt-serve
+    newTag: gpu-latest

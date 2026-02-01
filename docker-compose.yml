@@ -1,0 +1,139 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: asr-nmt-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: asr-nmt-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: asr_nmt_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: asr-nmt-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: asr-nmt-api
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/asr_nmt_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - MINIO_ENDPOINT=minio:9000
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - model_cache:/root/.cache
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: asr-nmt-worker
+    command: celery -A src.worker.celery_app worker --loglevel=info -Q default,asr,nmt -c 4
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/asr_nmt_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - MINIO_ENDPOINT=minio:9000
+      - WHISPER_DEVICE=cuda
+    volumes:
+      - .:/app
+      - model_cache:/root/.cache
+    depends_on:
+      - redis
+      - postgres
+      - api
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: asr-nmt-beat
+    command: celery -A src.worker.celery_app beat --loglevel=info
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    volumes:
+      - .:/app
+    depends_on:
+      - redis
+      - celery-worker
+
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: asr-nmt-flower
+    command: celery -A src.worker.celery_app flower --port=5555
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    ports:
+      - "5555:5555"
+    depends_on:
+      - celery-worker
+
+volumes:
+  redis_data:
+  postgres_data:
+  minio_data:
+  model_cache:

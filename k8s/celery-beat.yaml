@@ -1,0 +1,49 @@
+# Celery Beat - Scheduler for periodic tasks (cleanup, etc.)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-beat
+  namespace: asr-nmt
+  labels:
+    app: celery-beat
+spec:
+  replicas: 1  # Only one beat scheduler
+  selector:
+    matchLabels:
+      app: celery-beat
+  template:
+    metadata:
+      labels:
+        app: celery-beat
+    spec:
+      # Run on non-GPU nodes
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: gpu
+                    operator: DoesNotExist
+      containers:
+        - name: beat
+          image: your-registry/asr-nmt-serve:latest  # Change to your image
+          imagePullPolicy: Always
+          command: ["celery"]
+          args:
+            - "-A"
+            - "src.worker"
+            - "beat"
+            - "--loglevel=info"
+          envFrom:
+            - secretRef:
+                name: asr-nmt-secrets
+            - configMapRef:
+                name: asr-nmt-config
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "250m"

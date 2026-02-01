@@ -1,0 +1,87 @@
+# GPU Workers - Run on nodes with GPU label
+# These workers handle ASR (Whisper) and NMT (IndicTrans2) tasks
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asr-nmt-worker-gpu
+  namespace: asr-nmt
+  labels:
+    app: asr-nmt-worker-gpu
+spec:
+  replicas: 2  # One per GPU node
+  selector:
+    matchLabels:
+      app: asr-nmt-worker-gpu
+  template:
+    metadata:
+      labels:
+        app: asr-nmt-worker-gpu
+    spec:
+      # Schedule on GPU nodes only
+      nodeSelector:
+        gpu: "true"  # Your GPU node label
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: worker
+          image: your-registry/asr-nmt-serve:gpu-latest  # GPU-specific image
+          imagePullPolicy: Always
+          command: ["celery"]
+          args:
+            - "-A"
+            - "src.worker"
+            - "worker"
+            - "--loglevel=info"
+            - "--concurrency=2"
+            - "--queues=default,asr,nmt,high_priority"
+            - "--hostname=gpu-worker@%h"
+          envFrom:
+            - secretRef:
+                name: asr-nmt-secrets
+            - configMapRef:
+                name: asr-nmt-config
+          env:
+            - name: WHISPER_DEVICE
+              value: "cuda"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: "compute,utility"
+          resources:
+            requests:
+              memory: "8Gi"
+              cpu: "2"
+              nvidia.com/gpu: "1"
+            limits:
+              memory: "16Gi"
+              cpu: "4"
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /root/.cache
+            - name: shm
+              mountPath: /dev/shm
+      volumes:
+        - name: model-cache
+          emptyDir:
+            sizeLimit: 50Gi  # Cache for Whisper + IndicTrans2 models
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+---
+# Persistent model cache (optional - for faster restarts)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-cache-pvc
+  namespace: asr-nmt
+spec:
+  accessModes:
+    - ReadWriteMany  # Needs RWX for multiple workers
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: standard  # Change to your storage class that supports RWX
