@@ -5,15 +5,18 @@ A production-grade **Automatic Speech Recognition (ASR)** and **Neural Machine T
 ## Features
 
 - ✅ **Batch Processing**: Submit multiple audio files or text items in a single request
-- ✅ **ASR**: Transcribe audio using OpenAI Whisper (primary) or FB Omni (fallback)
-- ✅ **NMT**: Translate text between supported languages
+- ✅ **ASR**: Transcribe audio using OpenAI Whisper (large-v3)
+- ✅ **NMT**: Translate text using IndicTrans2 models with IndicTransToolkit
 - ✅ **ASR+NMT**: Combined transcription and translation pipeline
+- ✅ **Presigned Uploads**: Direct file upload to MinIO/S3 via presigned URLs
+- ✅ **Webhooks**: Receive callbacks when jobs complete
 - ✅ **API Key Authentication**: Secure API access with scoped keys
 - ✅ **Rate Limiting**: Per-key and global rate limits
 - ✅ **Concurrent Processing**: Celery workers with configurable concurrency
 - ✅ **Priority Queues**: Prioritize urgent jobs
 - ✅ **Auto Language Detection**: Automatic source language detection
 - ✅ **Job Tracking**: Track job and task progress in real-time
+- ✅ **Kubernetes Ready**: Full K8s manifests with GPU node scheduling
 
 ## Supported Languages
 
@@ -117,10 +120,88 @@ curl http://localhost:8000/v1/jobs/{job_id} \
   -H "Authorization: Bearer ask_your_api_key_here"
 ```
 
+## Presigned Upload Flow
+
+For large audio files, upload directly to MinIO/S3 using presigned URLs:
+
+```bash
+# Step 1: Get presigned upload URLs
+curl -X POST http://localhost:8000/v1/jobs/upload-urls \
+  -H "Authorization: Bearer ask_your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "count": 2,
+    "content_type": "audio/wav",
+    "expires_in": 3600
+  }'
+# Returns: { "job_id": "abc-123", "uploads": [{ "task_id": "...", "upload_url": "...", "storage_path": "..." }] }
+
+# Step 2: Upload files directly to MinIO (using the upload_url from response)
+curl -X PUT "https://minio:9000/presigned-url-here" \
+  -H "Content-Type: audio/wav" \
+  --data-binary @audio1.wav
+
+# Step 3: Confirm uploads and start processing
+curl -X POST http://localhost:8000/v1/jobs/{job_id}/confirm \
+  -H "Authorization: Bearer ask_your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_type": "asr",
+    "items": [
+      {"storage_path": "jobs/abc-123/tasks/task-id/input.wav"}
+    ],
+    "default_src_lang": "en"
+  }'
+```
+
+## Webhooks
+
+Get notified when jobs complete by providing a `callback_url`:
+
+```bash
+curl -X POST http://localhost:8000/v1/jobs \
+  -H "Authorization: Bearer ask_your_api_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "job_type": "asr",
+    "items": [{"audio_url": "https://example.com/audio.wav"}],
+    "callback_url": "https://your-server.com/webhook"
+  }'
+```
+
+When the job completes, your webhook receives:
+
+```json
+{
+  "event": "job.completed",
+  "job_id": "job-uuid",
+  "status": "completed",
+  "total_tasks": 5,
+  "completed_tasks": 5,
+  "failed_tasks": 0,
+  "completed_at": "2026-02-01T12:00:00Z"
+}
+```
+
 ## API Documentation
 
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/jobs` | POST | Create a new batch job |
+| `/v1/jobs` | GET | List all jobs (paginated) |
+| `/v1/jobs/{job_id}` | GET | Get job status and results |
+| `/v1/jobs/{job_id}` | DELETE | Cancel/delete a job |
+| `/v1/jobs/{job_id}/results` | GET | Get consolidated results |
+| `/v1/jobs/upload-urls` | POST | Get presigned upload URLs |
+| `/v1/jobs/{job_id}/confirm` | POST | Confirm uploads and start job |
+| `/v1/admin/api-keys` | POST | Create API key (admin) |
+| `/v1/admin/api-keys` | GET | List API keys (admin) |
+| `/v1/health` | GET | Health check |
 
 ## Architecture
 
@@ -129,17 +210,40 @@ curl http://localhost:8000/v1/jobs/{job_id} \
 │   Client    │────▶│  FastAPI    │────▶│   Redis     │
 │             │     │   (API)     │     │  (Queue)    │
 └─────────────┘     └─────────────┘     └──────┬──────┘
-                           │                    │
-                           ▼                    ▼
-                    ┌─────────────┐     ┌─────────────┐
-                    │  PostgreSQL │     │   Celery    │
-                    │    (DB)     │     │  Workers    │
-                    └─────────────┘     └──────┬──────┘
-                                               │
-                    ┌─────────────┐            │
-                    │   MinIO     │◀───────────┘
-                    │ (Storage)   │
-                    └─────────────┘
+       │                   │                    │
+       │                   ▼                    ▼
+       │            ┌─────────────┐     ┌─────────────┐
+       │            │  PostgreSQL │     │   Celery    │
+       │            │    (DB)     │     │  Workers    │
+       │            └─────────────┘     └──────┬──────┘
+       │                                       │
+       │  (presigned)  ┌─────────────┐         │
+       └──────────────▶│   MinIO     │◀────────┘
+                       │ (Storage)   │
+                       └─────────────┘
+```
+
+### Task Flow
+
+```
+POST /v1/jobs ─────▶ API validates & creates job/tasks in DB
+                              │
+                              ▼
+                     Enqueue tasks to Celery (Redis)
+                              │
+                              ▼
+                     Workers pick up tasks
+                              │
+                    ┌─────────┴─────────┐
+                    ▼                   ▼
+               ASR (Whisper)      NMT (IndicTrans2)
+                    │                   │
+                    └─────────┬─────────┘
+                              ▼
+                     Update DB with results
+                              │
+                              ▼
+                     If job complete → Send Webhook
 ```
 
 ## Configuration
@@ -195,6 +299,48 @@ pytest tests/ -v
 
 - **Celery Flower**: http://localhost:5555 (task monitoring)
 - **MinIO Console**: http://localhost:9001 (storage)
+
+## Kubernetes Deployment
+
+Deploy to a Kubernetes cluster with GPU support:
+
+```bash
+# Label GPU nodes
+kubectl label nodes <gpu-node-1> gpu=true
+kubectl label nodes <gpu-node-2> gpu=true
+
+# Deploy
+kubectl apply -k k8s/
+```
+
+### Cluster Architecture
+
+| Component | Nodes | Replicas |
+|-----------|-------|----------|
+| API | Non-GPU | 2 (HPA: 2-6) |
+| GPU Workers | GPU nodes (`gpu=true`) | 2 |
+| CPU Workers | Non-GPU | 2 (HPA: 1-4) |
+| Celery Beat | Non-GPU | 1 |
+| PostgreSQL | Any | 1 |
+| Redis | Any | 1 |
+| MinIO | Any | 1 |
+
+See [k8s/README.md](k8s/README.md) for detailed deployment instructions.
+
+## Models
+
+### ASR: OpenAI Whisper
+- Model: `large-v3`
+- Languages: All supported languages
+- Device: CUDA (GPU) or CPU
+
+### NMT: IndicTrans2
+- Models:
+  - `ai4bharat/indictrans2-en-indic-1B` (English → Indic)
+  - `ai4bharat/indictrans2-indic-en-1B` (Indic → English)
+  - `ai4bharat/indictrans2-indic-indic-1B` (Indic → Indic)
+- Preprocessing: IndicTransToolkit with IndicProcessor
+- Languages: en, hi, kn, mr, te, ml, ta
 
 ## License
 

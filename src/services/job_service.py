@@ -20,6 +20,7 @@ class JobService:
         db: AsyncSession,
         request: JobCreateRequest,
         api_key: ApiKey,
+        job_id: Optional[str] = None,
     ) -> Job:
         """
         Create a new job with tasks.
@@ -28,13 +29,14 @@ class JobService:
             db: Database session
             request: Job creation request
             api_key: Authenticated API key
+            job_id: Optional pre-generated job ID (for presigned upload flow)
 
         Returns:
             Created Job with tasks
         """
         # Create job
         job = Job(
-            id=str(uuid4()),
+            id=job_id or str(uuid4()),
             api_key_id=api_key.id,
             job_type=JobType(request.job_type),
             status=JobStatus.PENDING,
@@ -50,8 +52,12 @@ class JobService:
         # Create tasks for each item
         tasks = []
         for item in request.items:
-            # Determine input type
-            if item.audio_url:
+            # Determine input type and reference
+            if item.storage_path:
+                # File already uploaded to storage
+                input_type = "storage"
+                input_ref = item.storage_path
+            elif item.audio_url:
                 input_type = "audio_url"
                 input_ref = item.audio_url
             elif item.audio_b64:

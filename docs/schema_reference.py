@@ -78,6 +78,12 @@ For actual SQLAlchemy models, see: src/db/models.py
 # | detected_lang       | VARCHAR(10)       | NULLABLE                       |
 # | status              | ENUM(TaskStatus)  | NOT NULL, DEFAULT 'pending'    |
 # | asr_model_used      | ENUM(ASRModel)    | NULLABLE                       |
+#
+# Input Types:
+#   - 'audio_url'  : External URL to audio file
+#   - 'audio_b64'  : Base64-encoded audio data
+#   - 'storage'    : Path to file in MinIO/S3 (from presigned upload)
+#   - 'text'       : Plain text input (for NMT-only jobs)
 # | celery_task_id      | VARCHAR(100)      | NULLABLE                       |
 # | retry_count         | INTEGER           | NOT NULL, DEFAULT 0            |
 # | max_retries         | INTEGER           | NOT NULL, DEFAULT 3            |
@@ -187,6 +193,7 @@ For actual SQLAlchemy models, see: src/db/models.py
 #  │ src_lang     │                       │
 #  │ tgt_lang     │                       │
 #  │ priority     │                       │
+#  │ callback_url │ (webhook)             │
 #  │ task_counts  │                       │
 #  │ timestamps   │                       │
 #  └──────────────┘                       │
@@ -197,7 +204,7 @@ For actual SQLAlchemy models, see: src/db/models.py
 #  │ id (PK)      │
 #  │ job_id (FK)  │
 #  │ external_id  │
-#  │ input_type   │
+#  │ input_type   │ (audio_url|audio_b64|storage|text)
 #  │ input_ref    │
 #  │ languages    │
 #  │ status       │
@@ -219,3 +226,29 @@ For actual SQLAlchemy models, see: src/db/models.py
 #  │ ip/ua        │
 #  │ created_at   │
 #  └──────────────┘
+
+
+# ============================================================================
+# API FLOWS
+# ============================================================================
+#
+# Standard Flow:
+# --------------
+#   POST /v1/jobs (audio_url or audio_b64) → Job created → Tasks enqueued
+#                                                              ↓
+#   GET /v1/jobs/{id} ← Poll for status ←──────── Workers process tasks
+#                                                              ↓
+#                              Webhook sent (if callback_url) ←┘
+#
+#
+# Presigned Upload Flow:
+# ----------------------
+#   POST /v1/jobs/upload-urls → Get presigned URLs + job_id
+#                                      ↓
+#   PUT {upload_url} (direct to MinIO) → Upload audio files
+#                                      ↓
+#   POST /v1/jobs/{job_id}/confirm (storage_path) → Job created → Tasks enqueued
+#                                                                      ↓
+#   GET /v1/jobs/{id} ← Poll for status ←────────────── Workers process tasks
+#                                                                      ↓
+#                                      Webhook sent (if callback_url) ←┘

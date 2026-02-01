@@ -1,6 +1,7 @@
 """Job management API routes."""
 
 from typing import Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,15 +10,145 @@ from src.auth.security import require_any_scope
 from src.db.models import ApiKey, JobStatus
 from src.db.session import get_db
 from src.schemas.schemas import (
+    ConfirmUploadRequest,
     JobCreateRequest,
     JobCreateResponse,
     JobListResponse,
     JobStatusResponse,
+    UploadUrlItem,
+    UploadUrlRequest,
+    UploadUrlResponse,
 )
 from src.services.job_service import job_service
+from src.services.storage import storage_service
 from src.worker import enqueue_job_tasks
 
 router = APIRouter(prefix="/v1/jobs", tags=["Jobs"])
+
+
+# ============== Upload URL Endpoints ==============
+
+
+@router.post(
+    "/upload-urls",
+    response_model=UploadUrlResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Get presigned upload URLs",
+    description="Get presigned URLs to upload audio files directly to storage before creating a job.",
+)
+async def get_upload_urls(
+    request: UploadUrlRequest,
+    api_key: ApiKey = Depends(require_any_scope),
+):
+    """
+    Get presigned URLs for direct audio upload.
+    
+    Flow:
+    1. Call this endpoint to get upload URLs
+    2. Upload audio files directly to MinIO/S3 using PUT requests
+    3. Call POST /v1/jobs/{job_id}/confirm with the storage_path values
+    
+    This is useful for large files to avoid passing through the API server.
+    """
+    job_id = str(uuid4())
+    
+    uploads = storage_service.generate_batch_upload_urls(
+        job_id=job_id,
+        count=request.count,
+        content_type=request.content_type,
+        expires_in=request.expires_in,
+    )
+    
+    return UploadUrlResponse(
+        job_id=job_id,
+        uploads=[UploadUrlItem(**u) for u in uploads],
+    )
+
+
+@router.post(
+    "/{job_id}/confirm",
+    response_model=JobCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Confirm uploads and start job",
+    description="After uploading files to presigned URLs, confirm and start processing.",
+)
+async def confirm_uploads(
+    job_id: str,
+    request: ConfirmUploadRequest,
+    db: AsyncSession = Depends(get_db),
+    api_key: ApiKey = Depends(require_any_scope),
+):
+    """
+    Confirm uploaded files and start processing.
+    
+    Call this after uploading audio files to the presigned URLs.
+    Each item should include the storage_path from the upload URL response.
+    """
+    # Validate that all items have storage_path
+    for i, item in enumerate(request.items):
+        if request.job_type in ("asr", "asr+nmt"):
+            if not item.storage_path and not item.audio_url and not item.audio_b64:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Item {i}: storage_path, audio_url, or audio_b64 required for ASR jobs",
+                )
+        elif request.job_type == "nmt":
+            if not item.text:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Item {i}: Text required for NMT jobs",
+                )
+    
+    # Validate NMT language requirements
+    if request.job_type in ("nmt", "asr+nmt"):
+        if not request.default_tgt_lang:
+            missing_tgt = [item for item in request.items if not item.tgt_lang]
+            if missing_tgt:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Target language required for NMT jobs",
+                )
+    
+    # Create job request compatible with job_service
+    job_request = JobCreateRequest(
+        job_type=request.job_type,
+        items=request.items,
+        default_src_lang=request.default_src_lang,
+        default_tgt_lang=request.default_tgt_lang,
+        priority=request.priority,
+        callback_url=request.callback_url,
+        metadata=request.metadata,
+    )
+    
+    # Create job with the specified job_id
+    job = await job_service.create_job(db, job_request, api_key, job_id=job_id)
+    await db.commit()
+    
+    # Get tasks and enqueue them
+    tasks = await job_service.get_tasks_for_job(db, job.id)
+    task_payloads = [
+        {
+            "task_id": t.id,
+            "job_type": request.job_type,
+            "input_type": t.input_type,
+            "input_ref": t.input_ref,
+            "src_lang": t.src_lang,
+            "tgt_lang": t.tgt_lang,
+        }
+        for t in tasks
+    ]
+    enqueue_job_tasks(job.id, task_payloads, request.priority)
+    
+    return JobCreateResponse(
+        job_id=job.id,
+        job_type=job.job_type.value,
+        status=job.status.value,
+        enqueued_tasks=len(tasks),
+        created_at=job.created_at,
+    )
+
+
+# ============== Standard Job Endpoints ==============
 
 
 @router.post(
@@ -58,10 +189,10 @@ async def create_job(
     # Validate input types for job type
     for i, item in enumerate(request.items):
         if request.job_type in ("asr", "asr+nmt"):
-            if not item.audio_url and not item.audio_b64:
+            if not item.audio_url and not item.audio_b64 and not item.storage_path:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Item {i}: Audio required for ASR jobs",
+                    detail=f"Item {i}: Audio (audio_url, audio_b64, or storage_path) required for ASR jobs",
                 )
         elif request.job_type == "nmt":
             if not item.text:

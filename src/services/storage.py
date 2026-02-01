@@ -140,6 +140,53 @@ class StorageService:
             ExpiresIn=expires_in,
         )
 
+    def generate_upload_url(
+        self, job_id: str, task_id: str, content_type: str = "audio/wav", expires_in: int = 3600
+    ) -> dict:
+        """
+        Generate a presigned URL for uploading a file directly to storage.
+        
+        Returns:
+            dict with 'upload_url', 'storage_path', and 'expires_in'
+        """
+        ext = self._get_extension(content_type)
+        filename = f"input{ext}"
+        path = self._generate_path(job_id, task_id, filename)
+        
+        url = self.client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": self._bucket,
+                "Key": path,
+                "ContentType": content_type,
+            },
+            ExpiresIn=expires_in,
+        )
+        
+        return {
+            "upload_url": url,
+            "storage_path": path,
+            "expires_in": expires_in,
+            "content_type": content_type,
+        }
+
+    def generate_batch_upload_urls(
+        self, job_id: str, count: int, content_type: str = "audio/wav", expires_in: int = 3600
+    ) -> list[dict]:
+        """
+        Generate multiple presigned upload URLs for a batch job.
+        
+        Returns:
+            List of dicts with 'task_id', 'upload_url', 'storage_path', 'expires_in'
+        """
+        urls = []
+        for i in range(count):
+            task_id = str(uuid4())
+            upload_info = self.generate_upload_url(job_id, task_id, content_type, expires_in)
+            upload_info["task_id"] = task_id
+            urls.append(upload_info)
+        return urls
+
     def delete_job_files(self, job_id: str):
         """Delete all files for a job."""
         prefix = f"jobs/{job_id}/"

@@ -126,8 +126,11 @@ def process_task(self, task_payload: dict) -> dict:
         # Step 1: Get audio data if needed for ASR
         audio_data = None
         if job_type in ("asr", "asr+nmt"):
-            if input_type == "audio_url":
-                # Download from storage or URL
+            if input_type == "storage":
+                # Download from MinIO/S3 storage
+                audio_data = storage_service.download_audio(input_ref)
+            elif input_type == "audio_url":
+                # Download from external URL
                 import httpx
                 response = httpx.get(input_ref, follow_redirects=True)
                 response.raise_for_status()

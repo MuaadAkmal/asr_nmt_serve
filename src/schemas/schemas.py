@@ -38,6 +38,7 @@ class TaskItemCreate(BaseModel):
     id: Optional[str] = Field(None, description="Client-provided unique ID for this item")
     audio_url: Optional[str] = Field(None, description="URL to audio file")
     audio_b64: Optional[str] = Field(None, description="Base64-encoded audio data")
+    storage_path: Optional[str] = Field(None, description="Storage path from presigned upload")
     text: Optional[str] = Field(None, description="Text input (for NMT-only jobs)")
     src_lang: Optional[str] = Field(None, description="Source language code (overrides job default)")
     tgt_lang: Optional[str] = Field(None, description="Target language code (overrides job default)")
@@ -211,3 +212,56 @@ class LanguageInfo(BaseModel):
     asr_supported: bool
     nmt_supported: bool
     auto_detect: bool
+
+
+# ============== Upload URL Schemas ==============
+
+
+class UploadUrlRequest(BaseModel):
+    """Request for presigned upload URLs."""
+
+    count: int = Field(1, ge=1, le=100, description="Number of upload URLs to generate")
+    content_type: str = Field("audio/wav", description="Content type of files to upload")
+    expires_in: int = Field(3600, ge=60, le=86400, description="URL expiration in seconds")
+
+
+class UploadUrlItem(BaseModel):
+    """Single upload URL info."""
+
+    task_id: str
+    upload_url: str
+    storage_path: str
+    expires_in: int
+    content_type: str
+
+
+class UploadUrlResponse(BaseModel):
+    """Response with presigned upload URLs."""
+
+    job_id: str
+    uploads: list[UploadUrlItem]
+    instructions: str = Field(
+        default="Upload files using PUT request to each upload_url with the correct Content-Type header. "
+        "Then submit the job with storage_path for each item."
+    )
+
+
+class ConfirmUploadRequest(BaseModel):
+    """Request to confirm uploads and start processing."""
+
+    job_type: Literal["asr", "nmt", "asr+nmt"] = Field(
+        ..., description="Type of processing to perform"
+    )
+    items: list[TaskItemCreate] = Field(
+        ..., min_length=1, max_length=100, description="List of items with storage_path"
+    )
+    default_src_lang: Optional[str] = Field(None, description="Default source language")
+    default_tgt_lang: Optional[str] = Field(None, description="Default target language")
+    priority: int = Field(5, ge=1, le=10, description="Job priority")
+    callback_url: Optional[str] = Field(None, description="Webhook URL for completion")
+    metadata: Optional[dict] = Field(None, description="Custom metadata")
+
+    @field_validator("default_src_lang", "default_tgt_lang", mode="before")
+    @classmethod
+    def normalize_lang(cls, v: str | None) -> str | None:
+        return normalize_language(v)
