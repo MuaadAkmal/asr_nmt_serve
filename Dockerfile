@@ -39,7 +39,7 @@ CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
 # ============================================
 # GPU-enabled image (for workers with GPU)
 # ============================================
-FROM nvidia/cuda:12.1-cudnn8-runtime-ubuntu22.04 as gpu
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04 as gpu
 
 WORKDIR /app
 

@@ -9,7 +9,7 @@ spec:
   resources:
     requests:
       storage: 100Gi
-  storageClassName: standard  # Change to your storage class
+  storageClassName: local-path
 ---
 apiVersion: apps/v1
 kind: Deployment

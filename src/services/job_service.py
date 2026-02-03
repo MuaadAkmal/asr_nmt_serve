@@ -45,7 +45,7 @@ class JobService:
             priority=request.priority,
             total_tasks=len(request.items),
             callback_url=request.callback_url,
-            metadata=request.metadata,
+            job_metadata=request.metadata,
         )
         db.add(job)
 

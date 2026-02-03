@@ -53,10 +53,10 @@ async def get_api_key_from_db(
     if api_key is None:
         return None
 
-     if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
+    if api_key.expires_at and api_key.expires_at < datetime.now(timezone.utc):
         return None
 
-     if not verify_api_key(full_key, api_key.key_hash):
+    if not verify_api_key(full_key, api_key.key_hash):
         return None
 
     return api_key

@@ -26,7 +26,7 @@ spec:
           effect: "NoSchedule"
       containers:
         - name: worker
-          image: your-registry/asr-nmt-serve:gpu-latest  # GPU-specific image
+          image: ghostglitch007/asr-nmt-serve:gpu-latest
           imagePullPolicy: Always
           command: ["celery"]
           args:
@@ -65,8 +65,8 @@ spec:
               mountPath: /dev/shm
       volumes:
         - name: model-cache
-          emptyDir:
-            sizeLimit: 50Gi  # Cache for Whisper + IndicTrans2 models
+          persistentVolumeClaim:
+            claimName: model-cache-pvc
         - name: shm
           emptyDir:
             medium: Memory
@@ -80,8 +80,8 @@ metadata:
   namespace: asr-nmt
 spec:
   accessModes:
-    - ReadWriteMany  # Needs RWX for multiple workers
+    - ReadWriteOnce  # local-path only supports RWO
   resources:
     requests:
       storage: 100Gi
-  storageClassName: standard  # Change to your storage class that supports RWX
+  storageClassName: local-path

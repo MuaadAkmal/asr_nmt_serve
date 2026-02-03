@@ -27,7 +27,7 @@ spec:
                     operator: DoesNotExist
       containers:
         - name: beat
-          image: your-registry/asr-nmt-serve:latest  # Change to your image
+          image: ghostglitch007/asr-nmt-serve:latest
           imagePullPolicy: Always
           command: ["celery"]
           args:

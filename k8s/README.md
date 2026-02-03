@@ -64,12 +64,12 @@ Edit `k8s/secrets.yaml` with your production values:
 
 ```yaml
 stringData:
-  POSTGRES_PASSWORD: "your-secure-password"
-  DATABASE_URL: "postgresql+asyncpg://asr_user:your-secure-password@postgres:5432/asr_nmt_db"
+  POSTGRES_PASSWORD: "P4ssword@321"
+  DATABASE_URL: "postgresql+asyncpg://asr_user:P4ssword@321@postgres:5432/asr_nmt_db"
   SECRET_KEY: "your-secure-random-key"
-  ADMIN_API_KEY: "your-admin-api-key"
-  MINIO_ROOT_PASSWORD: "your-minio-password"
-  MINIO_SECRET_KEY: "your-minio-password"
+  ADMIN_API_KEY: "will-create-later"
+  MINIO_ROOT_PASSWORD: "P4ssword@321_minio"
+  MINIO_SECRET_KEY: "P4ssword@321_minio"
 ```
 
 ### 2. Update Image Registry

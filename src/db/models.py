@@ -106,7 +106,7 @@ class Job(Base):
     completed_tasks: Mapped[int] = mapped_column(Integer, default=0)
     failed_tasks: Mapped[int] = mapped_column(Integer, default=0)
     callback_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Webhook URL
-    metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    job_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

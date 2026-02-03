@@ -16,9 +16,8 @@ config = context.config
 
 # Set database URL from settings
 settings = get_settings()
-# Convert async URL to sync for Alembic
-sync_url = settings.database_url.replace("+asyncpg", "")
-config.set_main_option("sqlalchemy.url", sync_url)
+# Use the async URL for async migrations
+config.set_main_option("sqlalchemy.url", settings.database_url)
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
